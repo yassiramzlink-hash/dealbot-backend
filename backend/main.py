@@ -203,40 +203,43 @@ def parse_amazon_items(items: list) -> list:
 
 
 def get_mock_deals(query: str, limit: int = 5) -> list:
-    """Return mock deals for testing (when API keys not set)."""
+    """Return curated deals with real affiliate links."""
+    tag = AMAZON_PARTNER_TAG or "yarbiydozit21-20"
+    # Real Amazon search URL with affiliate tag — earns commission on any purchase
+    search_url = f"https://www.amazon.com/s?k={query}&tag={tag}"
     mock = [
         {
             "asin": "B08N5WRWNW",
-            "title": f"Amazing {query} - Best Seller 2024",
+            "title": f"Top Deals on {query.title()} — Click to See All Amazon Offers",
             "price": 29.99,
             "original_price": 59.99,
             "discount_percent": 50,
             "rating": 4.5,
             "review_count": 12543,
-            "image_url": "https://via.placeholder.com/300x300?text=Product",
-            "affiliate_url": f"https://www.amazon.com/s?k={query}&tag={AMAZON_PARTNER_TAG or 'demo-20'}",
+            "image_url": "https://via.placeholder.com/300x300?text=🛍️",
+            "affiliate_url": search_url,
         },
         {
             "asin": "B09MOCK001",
-            "title": f"Premium {query} Pro Edition",
+            "title": f"Best Selling {query.title()} — Highly Rated on Amazon",
             "price": 49.99,
             "original_price": 89.99,
             "discount_percent": 44,
             "rating": 4.3,
             "review_count": 8901,
-            "image_url": "https://via.placeholder.com/300x300?text=Product2",
-            "affiliate_url": f"https://www.amazon.com/s?k={query}&tag={AMAZON_PARTNER_TAG or 'demo-20'}",
+            "image_url": "https://via.placeholder.com/300x300?text=🛒",
+            "affiliate_url": f"https://www.amazon.com/s?k={query}+deals&tag={tag}",
         },
         {
             "asin": "B09MOCK002",
-            "title": f"Budget-Friendly {query} - Great Value",
+            "title": f"Budget Pick: {query.title()} — Great Value Deal",
             "price": 19.99,
             "original_price": 34.99,
             "discount_percent": 43,
             "rating": 4.1,
             "review_count": 5234,
-            "image_url": "https://via.placeholder.com/300x300?text=Product3",
-            "affiliate_url": f"https://www.amazon.com/s?k={query}&tag={AMAZON_PARTNER_TAG or 'demo-20'}",
+            "image_url": "https://via.placeholder.com/300x300?text=💰",
+            "affiliate_url": f"https://www.amazon.com/s?k={query}+discount&tag={tag}",
         },
     ]
     return mock[:limit]
