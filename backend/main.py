@@ -25,9 +25,9 @@ CREATORS_CLIENT_ID     = os.getenv("CREATORS_CLIENT_ID", "")
 CREATORS_CLIENT_SECRET = os.getenv("CREATORS_CLIENT_SECRET", "")
 AMAZON_PARTNER_TAG     = os.getenv("AMAZON_PARTNER_TAG", "tarek-us-20")
 
-# OAuth2 Token endpoint (Creators API)
-TOKEN_URL    = "https://creatorsapi.auth.us-west-2.amazoncognito.com/oauth2/token"
-CREATORS_API = "https://paapi5-na.amazon.com"
+# OAuth2 Token endpoint (Login with Amazon - NA region)
+TOKEN_URL    = "https://api.amazon.com/auth/o2/token"
+CREATORS_API = "https://affiliate-program.amazon.com"
 
 # ─── App ──────────────────────────────────────────────────────────────────────
 app = FastAPI(title="DealHunter AI API", version="2.0.0")
@@ -59,11 +59,13 @@ async def get_access_token() -> Optional[str]:
                 TOKEN_URL,
                 headers={
                     "Content-Type": "application/x-www-form-urlencoded",
-                    "Authorization": f"Basic {encoded}",
+
                 },
                 data={
                     "grant_type": "client_credentials",
-                    "scope": "creatorsapi/default",
+                    "scope": "creatorsapi/affiliates",
+                    "client_id": CREATORS_CLIENT_ID,
+                    "client_secret": CREATORS_CLIENT_SECRET,
                 }
             )
 
@@ -113,10 +115,11 @@ async def search_amazon_products(keywords: str, category: str = "All", limit: in
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
             response = await client.post(
-                f"{CREATORS_API}/paapi5/searchitems",
+                f"{CREATORS_API}/creatorsapi/v2/search",
                 headers={
                     "Content-Type": "application/json",
                     "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
                     "x-amz-target": "com.amazon.paapi5.v1.ProductAdvertisingAPIv1.SearchItems",
                 },
                 json=payload
