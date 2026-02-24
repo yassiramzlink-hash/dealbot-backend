@@ -204,7 +204,7 @@ def parse_amazon_items(items: list) -> list:
 
 def get_mock_deals(query: str, limit: int = 5) -> list:
     """Return curated deals with real affiliate links."""
-    tag = AMAZON_PARTNER_TAG or "yarbiydozit21-20"
+    tag = AMAZON_PARTNER_TAG or "tarek-us-20"
     # Real Amazon search URL with affiliate tag — earns commission on any purchase
     search_url = f"https://www.amazon.com/s?k={query}&tag={tag}"
     mock = [
