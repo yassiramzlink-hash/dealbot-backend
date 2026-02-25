@@ -323,6 +323,100 @@ async def health():
     }
 
 
+@app.get("/debug-auth")
+async def debug_auth():
+    """
+    يختبر كل طرق المصادقة الممكنة ويُرجع تقريراً كاملاً.
+    """
+    import time
+    import json
+
+    client_id     = CREATORS_CLIENT_ID
+    client_secret = CREATORS_CLIENT_SECRET
+
+    results = {
+        "env_vars": {
+            "CREATORS_CLIENT_ID_set":     bool(client_id),
+            "CREATORS_CLIENT_ID_length":  len(client_id),
+            "CREATORS_CLIENT_ID_value":   client_id[:8] + "..." if client_id else "EMPTY",
+            "CREATORS_CLIENT_SECRET_set": bool(client_secret),
+            "CREATORS_CLIENT_SECRET_length": len(client_secret),
+        },
+        "tests": {}
+    }
+
+    if not client_id or not client_secret:
+        results["conclusion"] = "❌ المتغيرات فارغة — تحقق من Railway Variables"
+        return results
+
+    # ── طريقة 1: Basic Auth + scope=creatorsapi/default ──
+    try:
+        encoded = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.post(
+                "https://creatorsapi.auth.us-west-2.amazoncognito.com/oauth2/token",
+                headers={"Content-Type": "application/x-www-form-urlencoded", "Authorization": f"Basic {encoded}"},
+                data={"grant_type": "client_credentials", "scope": "creatorsapi/default"}
+            )
+            results["tests"]["method1_basic_auth_default_scope"] = {
+                "status": r.status_code, "response": r.text[:200]
+            }
+    except Exception as e:
+        results["tests"]["method1_basic_auth_default_scope"] = {"error": str(e)}
+
+    # ── طريقة 2: Body params + بدون scope ──
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.post(
+                "https://creatorsapi.auth.us-west-2.amazoncognito.com/oauth2/token",
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+                data={"grant_type": "client_credentials", "client_id": client_id, "client_secret": client_secret}
+            )
+            results["tests"]["method2_body_params_no_scope"] = {
+                "status": r.status_code, "response": r.text[:200]
+            }
+    except Exception as e:
+        results["tests"]["method2_body_params_no_scope"] = {"error": str(e)}
+
+    # ── طريقة 3: Basic Auth + بدون scope ──
+    try:
+        encoded = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.post(
+                "https://creatorsapi.auth.us-west-2.amazoncognito.com/oauth2/token",
+                headers={"Content-Type": "application/x-www-form-urlencoded", "Authorization": f"Basic {encoded}"},
+                data={"grant_type": "client_credentials"}
+            )
+            results["tests"]["method3_basic_auth_no_scope"] = {
+                "status": r.status_code, "response": r.text[:200]
+            }
+    except Exception as e:
+        results["tests"]["method3_basic_auth_no_scope"] = {"error": str(e)}
+
+    # ── طريقة 4: LWA endpoint ──
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.post(
+                "https://api.amazon.com/auth/o2/token",
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+                data={"grant_type": "client_credentials", "client_id": client_id, "client_secret": client_secret, "scope": "creatorsapi/default"}
+            )
+            results["tests"]["method4_lwa_endpoint"] = {
+                "status": r.status_code, "response": r.text[:200]
+            }
+    except Exception as e:
+        results["tests"]["method4_lwa_endpoint"] = {"error": str(e)}
+
+    # ── الخلاصة ──
+    success = [k for k, v in results["tests"].items() if v.get("status") == 200]
+    if success:
+        results["conclusion"] = f"✅ نجحت الطريقة: {success[0]}"
+    else:
+        results["conclusion"] = "❌ كل الطرق فشلت — المشكلة في الـ credentials نفسها"
+
+    return results
+
+
 @app.get("/search")
 async def search(
     q: str = Query(...),
