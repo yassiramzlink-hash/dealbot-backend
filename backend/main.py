@@ -26,8 +26,8 @@ CREATORS_CLIENT_SECRET = os.getenv("CREATORS_CLIENT_SECRET", "")
 AMAZON_PARTNER_TAG     = os.getenv("AMAZON_PARTNER_TAG", "tarek-us-20")
 GROQ_API_KEY           = os.getenv("GROQ_API_KEY", "")
 
-# OAuth2 Token endpoint (Login with Amazon - NA region)
-TOKEN_URL    = "https://api.amazon.com/auth/o2/token"
+# OAuth2 Token endpoint (Creators API - Cognito)
+TOKEN_URL    = "https://creatorsapi.auth.us-west-2.amazoncognito.com/oauth2/token"
 CREATORS_API = "https://affiliate-program.amazon.com"
 
 # ─── App ──────────────────────────────────────────────────────────────────────
@@ -60,13 +60,11 @@ async def get_access_token() -> Optional[str]:
                 TOKEN_URL,
                 headers={
                     "Content-Type": "application/x-www-form-urlencoded",
-
+                    "Authorization": f"Basic {encoded}",
                 },
                 data={
                     "grant_type": "client_credentials",
-                    "scope": "creatorsapi/affiliates",
-                    "client_id": CREATORS_CLIENT_ID,
-                    "client_secret": CREATORS_CLIENT_SECRET,
+                    "scope": "creatorsapi/default",
                 }
             )
 
