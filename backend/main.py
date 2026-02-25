@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 CREATORS_CLIENT_ID     = os.getenv("CREATORS_CLIENT_ID", "")
 CREATORS_CLIENT_SECRET = os.getenv("CREATORS_CLIENT_SECRET", "")
 AMAZON_PARTNER_TAG     = os.getenv("AMAZON_PARTNER_TAG", "tarek-us-20")
+GROQ_API_KEY           = os.getenv("GROQ_API_KEY", "")
 
 # OAuth2 Token endpoint (Login with Amazon - NA region)
 TOKEN_URL    = "https://api.amazon.com/auth/o2/token"
@@ -226,16 +227,83 @@ def get_mock_deals(query: str, limit: int = 5) -> list:
     return mock[:limit]
 
 
-# ─── AI Deal Scoring ──────────────────────────────────────────────────────────
+# ─── AI Deal Scoring with Groq ────────────────────────────────────────────────
 async def ai_score_deals(deals: list, query: str) -> list:
-    """Score deals algorithmically."""
+    """Score deals using Groq AI (free) if available, else algorithmic fallback."""
+
+    # ── Algorithmic fallback (always runs first) ──
     for deal in deals:
         if "ai_score" not in deal:
-            discount  = deal.get("discount_percent", 0)
-            rating    = deal.get("rating", 0)
-            reviews   = min(deal.get("review_count", 0) / 1000, 10)
+            discount = deal.get("discount_percent", 0)
+            rating   = deal.get("rating", 0)
+            reviews  = min(deal.get("review_count", 0) / 1000, 10)
             deal["ai_score"]   = round((discount * 0.5) + (rating * 5) + reviews, 1)
-            deal["ai_summary"] = f"{discount}% off with {rating}★ rating — solid deal."
+            deal["ai_summary"] = f"{discount}% off with {rating}★ rating."
+
+    # ── Groq AI scoring (if API key is set) ──
+    if not GROQ_API_KEY or not deals:
+        return sorted(deals, key=lambda x: x.get("ai_score", 0), reverse=True)
+
+    try:
+        deals_text = "\n".join([
+            f"{i+1}. {d.get('title','')[:60]} | ${d.get('price')} (was ${d.get('original_price')}) | "
+            f"{d.get('discount_percent')}% off | {d.get('rating')}★ ({d.get('review_count')} reviews)"
+            for i, d in enumerate(deals[:5])
+        ])
+
+        prompt = f"""You are a deal analysis expert. A user searched for: "{query}"
+
+Here are the top Amazon deals found:
+{deals_text}
+
+For each deal, provide:
+1. A score from 0-10 (considering: discount%, rating, review count, value for money)
+2. A short 1-sentence summary in English (max 12 words)
+
+Reply ONLY in this exact JSON format (no extra text):
+[
+  {{"index": 1, "score": 8.5, "summary": "Excellent value with strong reviews and deep discount."}},
+  {{"index": 2, "score": 7.2, "summary": "Good mid-range option with reliable customer ratings."}}
+]"""
+
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            response = await client.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {GROQ_API_KEY}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": "llama3-8b-8192",
+                    "max_tokens": 500,
+                    "temperature": 0.3,
+                    "messages": [
+                        {"role": "system", "content": "You are a deal analysis expert. Always reply in valid JSON only."},
+                        {"role": "user", "content": prompt}
+                    ]
+                }
+            )
+
+            if response.status_code == 200:
+                import json
+                content = response.json()["choices"][0]["message"]["content"].strip()
+                # Clean JSON if wrapped in backticks
+                content = content.replace("```json", "").replace("```", "").strip()
+                ai_results = json.loads(content)
+
+                for result in ai_results:
+                    idx = result["index"] - 1
+                    if 0 <= idx < len(deals):
+                        deals[idx]["ai_score"]   = result["score"]
+                        deals[idx]["ai_summary"]  = result["summary"]
+
+                logger.info("✅ Groq AI scored deals successfully")
+            else:
+                logger.warning(f"Groq API error: {response.status_code} - {response.text}")
+
+    except Exception as e:
+        logger.warning(f"Groq AI scoring failed, using algorithmic: {e}")
+
     return sorted(deals, key=lambda x: x.get("ai_score", 0), reverse=True)
 
 
@@ -251,6 +319,7 @@ async def health():
     return {
         "status": "healthy",
         "creators_api": "connected ✅" if token else "not connected ❌",
+        "groq_ai": "enabled ✅" if GROQ_API_KEY else "not configured ❌",
         "partner_tag": AMAZON_PARTNER_TAG,
         "timestamp": datetime.now().isoformat()
     }
