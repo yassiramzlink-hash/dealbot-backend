@@ -622,3 +622,92 @@ async def get_stats():
         "total_favorites": favorites[0]["count"] if favorites else 0,
         "total_searches": searches[0]["count"] if searches else 0,
     }
+
+# ─── Messaging System ─────────────────────────────────────────────────────────
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_API = "https://api.telegram.org"
+
+
+async def send_telegram_message(telegram_id: int, text: str, keyboard: list = None) -> bool:
+    """إرسال رسالة لمستخدم عبر Telegram Bot API."""
+    if not TELEGRAM_BOT_TOKEN:
+        logger.warning("TELEGRAM_BOT_TOKEN not set")
+        return False
+    payload = {"chat_id": telegram_id, "text": text, "parse_mode": "Markdown"}
+    if keyboard:
+        payload["reply_markup"] = {"inline_keyboard": keyboard}
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.post(
+                f"{TELEGRAM_API}/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+                json=payload
+            )
+            return r.status_code == 200
+    except Exception as e:
+        logger.error(f"Telegram send failed: {e}")
+        return False
+
+
+@app.get("/broadcast")
+async def broadcast(message: str, secret: str = ""):
+    """إرسال رسالة يدوية لكل المستخدمين."""
+    if secret != os.getenv("ADMIN_SECRET", "dealbot2026"):
+        return {"error": "Unauthorized ❌"}
+    users = await supabase_request("GET", "users", params="?select=telegram_id")
+    if not users:
+        return {"error": "No users found"}
+    sent, failed = 0, 0
+    for user in users:
+        success = await send_telegram_message(user["telegram_id"], message)
+        if success:
+            sent += 1
+        else:
+            failed += 1
+    return {"success": True, "sent": sent, "failed": failed, "total": len(users)}
+
+
+@app.get("/daily-deals")
+async def send_daily_deals(secret: str = ""):
+    """إرسال عروض يومية تلقائية لكل المستخدمين."""
+    if secret != os.getenv("ADMIN_SECRET", "dealbot2026"):
+        return {"error": "Unauthorized ❌"}
+    # جلب أفضل العروض
+    deals = await search_amazon_products("best deals today", limit=5)
+    scored = await ai_score_deals(deals, "daily deals")
+    top3 = scored[:3]
+    # بناء الرسالة
+    msg = "🔥 *Today's Top Deals* — Don't miss out!\n\n"
+    keyboard = []
+    for i, deal in enumerate(top3, 1):
+        msg += f"*{i}. {deal.get('title','')[:40]}...*\n"
+        msg += f"💰 ${deal.get('price','N/A')} | 🏷️ {deal.get('discount_percent',0)}% OFF\n\n"
+        if deal.get("affiliate_url"):
+            keyboard.append([{"text": f"🛒 Buy #{i}", "url": deal["affiliate_url"]}])
+    # إرسال لكل المستخدمين
+    users = await supabase_request("GET", "users", params="?select=telegram_id")
+    if not users:
+        return {"error": "No users found"}
+    sent, failed = 0, 0
+    for user in users:
+        success = await send_telegram_message(user["telegram_id"], msg, keyboard)
+        if success:
+            sent += 1
+        else:
+            failed += 1
+    return {"success": True, "sent": sent, "failed": failed, "deals_count": len(top3)}
+
+
+@app.get("/welcome/{telegram_id}")
+async def send_welcome(telegram_id: int, first_name: str = "there"):
+    """إرسال رسالة ترحيب لمستخدم جديد."""
+    msg = (
+        f"👋 Welcome *{first_name}* to DealHunter AI!\n\n"
+        "🎯 Here's what you can do:\n"
+        "🔍 Search any product for deals\n"
+        "❤️ Save favorites\n"
+        "🔥 Get daily deal alerts\n\n"
+        "Type any product name to start! 🚀"
+    )
+    keyboard = [[{"text": "🛍️ Find Deals Now", "url": "https://t.me/your_bot"}]]
+    success = await send_telegram_message(telegram_id, msg, keyboard)
+    return {"success": success}
