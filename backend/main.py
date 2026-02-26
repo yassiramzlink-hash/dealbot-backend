@@ -708,6 +708,6 @@ async def send_welcome(telegram_id: int, first_name: str = "there"):
         "🔥 Get daily deal alerts\n\n"
         "Type any product name to start! 🚀"
     )
-    keyboard = [[{"text": "🛍️ Find Deals Now", "url": "https://t.me/your_bot"}]]
+    keyboard = [[{"text": "🛍️ Find Deals Now", "url": "https://t.me/blackfridayUSA2"}]]
     success = await send_telegram_message(telegram_id, msg, keyboard)
     return {"success": success}
