@@ -886,24 +886,46 @@ async def fetch_channel_deals(limit: int = 20) -> list:
 
 async def fetch_channel_via_web(limit: int = 20) -> list:
     """سحب من preview القناة العامة كـ fallback."""
+    import html as html_module
     deals = []
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
             r = await client.get(
                 "https://t.me/s/USA_Deals_and_Coupons",
-                headers={"User-Agent": "Mozilla/5.0"}
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
             )
             if r.status_code == 200:
-                # استخراج الرسائل
-                messages = re.findall(
-                    r'<div class="tgme_widget_message_text[^"]*"[^>]*>(.*?)</div>',
-                    r.text, re.DOTALL
+                raw = r.text
+                # استخراج الرسائل مع الصور
+                post_blocks = re.findall(
+                    r'<div class="tgme_widget_message_wrap[^>]*>.*?</div>\s*</div>\s*</div>',
+                    raw, re.DOTALL
                 )
-                for msg_html in messages[-limit:]:
-                    # تنظيف HTML
-                    text = re.sub(r'<[^>]+>', ' ', msg_html)
-                    text = text.replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>').strip()
-                    deal = parse_channel_message(text)
+                for block in post_blocks[-limit:]:
+                    # استخراج النص
+                    text_match = re.search(
+                        r'<div class="tgme_widget_message_text[^"]*"[^>]*>(.*?)</div>',
+                        block, re.DOTALL
+                    )
+                    # استخراج الصورة
+                    img_match = re.search(
+                        r'background-image:url\('+"'"+r'(https?://[^']+)'+"'"+r'\)',
+                        block
+                    ) or re.search(r'<img[^>]+src=["\'](https?://[^\"']+)["\']', block)
+
+                    if not text_match:
+                        continue
+
+                    msg_html = text_match.group(1)
+                    # تنظيف HTML بشكل كامل
+                    text = re.sub(r'<br\s*/?>', '\n', msg_html)
+                    text = re.sub(r'<a[^>]+href="([^"]+)"[^>]*>.*?</a>', r'\1', text, flags=re.DOTALL)
+                    text = re.sub(r'<[^>]+>', ' ', text)
+                    text = html_module.unescape(text)
+                    text = re.sub(r' +', ' ', text).strip()
+
+                    image_url = img_match.group(1) if img_match else None
+                    deal = parse_channel_message(text, image_url)
                     if deal:
                         deals.append(deal)
     except Exception as e:
