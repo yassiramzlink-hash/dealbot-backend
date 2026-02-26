@@ -540,7 +540,7 @@ async def get_recommendations(telegram_id: int) -> list:
 
 
 # ─── Supabase API Routes ───────────────────────────────────────────────────────
-@app.post("/user/register")
+@app.get("/user/register")
 async def register_user(telegram_id: int, username: str = None, first_name: str = None):
     """Register or update user in database."""
     result = await upsert_user(telegram_id, username, first_name)
@@ -549,7 +549,7 @@ async def register_user(telegram_id: int, username: str = None, first_name: str 
     return {"success": False, "message": "Supabase not configured"}
 
 
-@app.post("/user/favorite")
+@app.get("/user/favorite")
 async def add_favorite(
     telegram_id: int,
     asin: str,
@@ -571,7 +571,7 @@ async def add_favorite(
     return {"success": False, "message": "Already in favorites or error"}
 
 
-@app.delete("/user/favorite")
+@app.get("/user/unfavorite")
 async def remove_favorite(telegram_id: int, asin: str):
     """Remove product from favorites."""
     await supabase_request("DELETE", "favorites",
