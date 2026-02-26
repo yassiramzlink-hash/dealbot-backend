@@ -234,9 +234,9 @@ async def ai_score_deals(deals: list, query: str) -> list:
     # ── Algorithmic fallback (always runs first) ──
     for deal in deals:
         if "ai_score" not in deal:
-            discount = deal.get("discount_percent", 0)
-            rating   = deal.get("rating", 0)
-            reviews  = min(deal.get("review_count", 0) / 1000, 10)
+            discount = deal.get("discount_percent") or 0
+            rating   = deal.get("rating") or 0
+            reviews  = min((deal.get("review_count") or 0) / 1000, 10)
             deal["ai_score"]   = round((discount * 0.5) + (rating * 5) + reviews, 1)
             deal["ai_summary"] = f"{discount}% off with {rating}★ rating."
 
