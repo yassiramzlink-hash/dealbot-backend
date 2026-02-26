@@ -708,7 +708,7 @@ async def send_welcome(telegram_id: int, first_name: str = "there"):
         "🔥 Get daily deal alerts\n\n"
         "Type any product name to start! 🚀"
     )
-    keyboard = [[{"text": "🛍️ Find Deals Now", "url": "@dealshunter_ai_bot"}]]
+    keyboard = [[{"text": "🛍️ Find Deals Now", "url": "https://t.me/deealshunter_ai_bot"}]]
     success = await send_telegram_message(telegram_id, msg, keyboard)
     return {"success": success}
 
@@ -908,10 +908,10 @@ async def fetch_channel_via_web(limit: int = 20) -> list:
                         block, re.DOTALL
                     )
                     # استخراج الصورة
-                    img_match = re.search(
-                        r'background-image:url\('+"'"+r'(https?://[^']+)'+"'"+r'\)',
-                        block
-                    ) or re.search(r'<img[^>]+src=["\'](https?://[^\"']+)["\']', block)
+                    img_match = re.search(r"background-image:url\('(https?://[^']+)'\)", block)
+                    if not img_match:
+                        img_match = re.search(r'src="(https?://[^"]+)"', block)
+
 
                     if not text_match:
                         continue
