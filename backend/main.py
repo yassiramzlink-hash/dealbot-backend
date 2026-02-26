@@ -25,6 +25,8 @@ CREATORS_CLIENT_ID     = os.getenv("CREATORS_CLIENT_ID", "")
 CREATORS_CLIENT_SECRET = os.getenv("CREATORS_CLIENT_SECRET", "")
 AMAZON_PARTNER_TAG     = os.getenv("AMAZON_PARTNER_TAG", "tarek-us-20")
 GROQ_API_KEY           = os.getenv("GROQ_API_KEY", "")
+SUPABASE_URL           = os.getenv("SUPABASE_URL", "")
+SUPABASE_KEY           = os.getenv("SUPABASE_KEY", "")
 
 # OAuth2 Token endpoint (Creators API - Cognito)
 TOKEN_URL    = "https://creatorsapi.auth.us-west-2.amazoncognito.com/oauth2/token"
@@ -318,6 +320,7 @@ async def health():
         "status": "healthy",
         "creators_api": "connected ✅" if token else "not connected ❌",
         "groq_ai": "enabled ✅" if GROQ_API_KEY else "not configured ❌",
+        "supabase": "connected ✅" if SUPABASE_URL else "not configured ❌",
         "partner_tag": AMAZON_PARTNER_TAG,
         "timestamp": datetime.now().isoformat()
     }
@@ -458,3 +461,164 @@ async def get_categories():
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)
+
+
+# ─── Supabase Helper ──────────────────────────────────────────────────────────
+async def supabase_request(method: str, table: str, data: dict = None, params: str = "") -> dict:
+    """Generic Supabase REST API request."""
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return None
+    url = f"{SUPABASE_URL}/rest/v1/{table}{params}"
+    headers = {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "Content-Type": "application/json",
+        "Prefer": "return=representation",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            if method == "GET":
+                r = await client.get(url, headers=headers)
+            elif method == "POST":
+                r = await client.post(url, headers=headers, json=data)
+            elif method == "PATCH":
+                r = await client.patch(url, headers=headers, json=data)
+            elif method == "DELETE":
+                r = await client.delete(url, headers=headers)
+            if r.status_code in [200, 201]:
+                return r.json()
+            logger.error(f"Supabase error: {r.status_code} - {r.text}")
+            return None
+    except Exception as e:
+        logger.error(f"Supabase request failed: {e}")
+        return None
+
+
+# ─── User Functions ───────────────────────────────────────────────────────────
+async def upsert_user(telegram_id: int, username: str = None, first_name: str = None):
+    """Register or update user."""
+    # Check if exists
+    existing = await supabase_request("GET", "users", params=f"?telegram_id=eq.{telegram_id}")
+    if existing:
+        # Update last_active
+        await supabase_request("PATCH", "users",
+            data={"last_active": datetime.now().isoformat()},
+            params=f"?telegram_id=eq.{telegram_id}")
+        return existing[0]
+    else:
+        # Create new user
+        return await supabase_request("POST", "users", data={
+            "telegram_id": telegram_id,
+            "username": username,
+            "first_name": first_name,
+        })
+
+
+async def save_search(telegram_id: int, query: str, results_count: int):
+    """Save search to history."""
+    await supabase_request("POST", "search_history", data={
+        "telegram_id": telegram_id,
+        "query": query,
+        "results_count": results_count,
+    })
+    # Update total_searches counter
+    existing = await supabase_request("GET", "users", params=f"?telegram_id=eq.{telegram_id}&select=total_searches")
+    if existing:
+        count = existing[0].get("total_searches", 0) + 1
+        await supabase_request("PATCH", "users",
+            data={"total_searches": count},
+            params=f"?telegram_id=eq.{telegram_id}")
+
+
+async def get_recommendations(telegram_id: int) -> list:
+    """Get personalized recommendations based on search history."""
+    history = await supabase_request("GET", "search_history",
+        params=f"?telegram_id=eq.{telegram_id}&order=searched_at.desc&limit=5")
+    if not history:
+        return []
+    return [h["query"] for h in history]
+
+
+# ─── Supabase API Routes ───────────────────────────────────────────────────────
+@app.post("/user/register")
+async def register_user(telegram_id: int, username: str = None, first_name: str = None):
+    """Register or update user in database."""
+    result = await upsert_user(telegram_id, username, first_name)
+    if result:
+        return {"success": True, "user": result}
+    return {"success": False, "message": "Supabase not configured"}
+
+
+@app.post("/user/favorite")
+async def add_favorite(
+    telegram_id: int,
+    asin: str,
+    title: str = None,
+    price: float = None,
+    affiliate_url: str = None
+):
+    """Add product to favorites."""
+    await upsert_user(telegram_id)
+    result = await supabase_request("POST", "favorites", data={
+        "telegram_id": telegram_id,
+        "asin": asin,
+        "title": title,
+        "price": price,
+        "affiliate_url": affiliate_url,
+    })
+    if result:
+        return {"success": True, "message": "Added to favorites ❤️"}
+    return {"success": False, "message": "Already in favorites or error"}
+
+
+@app.delete("/user/favorite")
+async def remove_favorite(telegram_id: int, asin: str):
+    """Remove product from favorites."""
+    await supabase_request("DELETE", "favorites",
+        params=f"?telegram_id=eq.{telegram_id}&asin=eq.{asin}")
+    return {"success": True, "message": "Removed from favorites"}
+
+
+@app.get("/user/favorites")
+async def get_favorites(telegram_id: int):
+    """Get user's favorite products."""
+    favorites = await supabase_request("GET", "favorites",
+        params=f"?telegram_id=eq.{telegram_id}&order=added_at.desc")
+    return {"telegram_id": telegram_id, "count": len(favorites or []), "favorites": favorites or []}
+
+
+@app.get("/user/history")
+async def get_history(telegram_id: int):
+    """Get user's search history."""
+    history = await supabase_request("GET", "search_history",
+        params=f"?telegram_id=eq.{telegram_id}&order=searched_at.desc&limit=20")
+    return {"telegram_id": telegram_id, "history": history or []}
+
+
+@app.get("/user/recommendations")
+async def get_user_recommendations(telegram_id: int):
+    """Get personalized recommendations based on history."""
+    queries = await get_recommendations(telegram_id)
+    if not queries:
+        # Default recommendations for new users
+        return {"recommendations": await search_amazon_products("best deals today", limit=5)}
+    # Search based on last query
+    deals = await search_amazon_products(queries[0], limit=5)
+    scored = await ai_score_deals(deals, queries[0])
+    return {
+        "based_on": queries[0],
+        "recommendations": scored
+    }
+
+
+@app.get("/stats")
+async def get_stats():
+    """Get bot statistics."""
+    users = await supabase_request("GET", "users", params="?select=count")
+    favorites = await supabase_request("GET", "favorites", params="?select=count")
+    searches = await supabase_request("GET", "search_history", params="?select=count")
+    return {
+        "total_users": users[0]["count"] if users else 0,
+        "total_favorites": favorites[0]["count"] if favorites else 0,
+        "total_searches": searches[0]["count"] if searches else 0,
+    }
