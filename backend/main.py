@@ -708,6 +708,227 @@ async def send_welcome(telegram_id: int, first_name: str = "there"):
         "🔥 Get daily deal alerts\n\n"
         "Type any product name to start! 🚀"
     )
-    keyboard = [[{"text": "🛍️ Find Deals Now", "url": "https://t.me/blackfridayUSA2"}]]
+    keyboard = [[{"text": "🛍️ Find Deals Now", "url": "https://t.me/your_bot"}]]
     success = await send_telegram_message(telegram_id, msg, keyboard)
     return {"success": success}
+
+
+# ─── Telegram Channel Parser ──────────────────────────────────────────────────
+import re
+
+def parse_channel_message(text: str, image_url: str = None) -> dict:
+    """
+    يحلل رسائل قناة @USA_Deals_and_Coupons ويستخرج بيانات المنتج.
+    يدعم 3 أشكال مختلفة من الرسائل.
+    """
+    if not text:
+        return None
+
+    deal = {
+        "title": None,
+        "price": None,
+        "original_price": None,
+        "discount_percent": 0,
+        "rating": None,
+        "reviews": None,
+        "affiliate_url": None,
+        "image_url": image_url,
+        "category": None,
+        "is_prime": False,
+        "is_price_error": False,
+        "source": "telegram_channel",
+    }
+
+    lines = [l.strip() for l in text.strip().split("\n") if l.strip()]
+
+    # ── العنوان: السطر بعد Deal Alert / Great Deal / PRICE ERROR ──
+    trigger_keywords = ["deal alert", "great deal", "price error", "special deal", "hot deal", "flash deal"]
+    for i, line in enumerate(lines):
+        if any(k in line.lower() for k in trigger_keywords):
+            if i + 1 < len(lines):
+                deal["title"] = lines[i + 1]
+            break
+
+    # إذا لم يُوجد title جرب أول سطر نصي طويل
+    if not deal["title"]:
+        for line in lines:
+            if len(line) > 20 and not line.startswith("http") and not line.startswith("#"):
+                deal["title"] = line
+                break
+
+    # ── السعر الحالي ──
+    price_patterns = [
+        r'(?:Error Price:|Only|💰|💵|🏷️|Price:)?\s*\$?([\d,]+\.?\d*)\s*\$?',
+        r'([\d,]+\.?\d*)\$',
+    ]
+    for pattern in price_patterns:
+        matches = re.findall(pattern, text)
+        if matches:
+            try:
+                deal["price"] = float(matches[0].replace(",", ""))
+                break
+            except:
+                pass
+
+    # ── السعر الأصلي (مشطوب) ──
+    original_patterns = [
+        r'(?:Should Be:|~~\$?|Was:?\s*)\$?([\d,]+\.?\d*)',
+        r'(?:44,98|41,99|Should Be)[^\d]*([\d,]+\.?\d*)',
+        r'([\d,]+\.?\d*)\$?\s*(?:~~|→)',
+    ]
+    for pattern in original_patterns:
+        m = re.search(pattern, text)
+        if m:
+            try:
+                orig = float(m.group(1).replace(",", "."))
+                if deal["price"] and orig > deal["price"]:
+                    deal["original_price"] = orig
+                    break
+            except:
+                pass
+
+    # ── نسبة الخصم ──
+    discount_match = re.search(r'(\d+)%', text)
+    if discount_match:
+        deal["discount_percent"] = int(discount_match.group(1))
+    elif deal["price"] and deal["original_price"]:
+        deal["discount_percent"] = round((1 - deal["price"] / deal["original_price"]) * 100)
+
+    # ── التقييم وعدد المراجعات ──
+    rating_match = re.search(r'([\d.]+)\s*/\s*5', text)
+    if rating_match:
+        deal["rating"] = float(rating_match.group(1))
+
+    reviews_match = re.search(r'([\d,]+)\s*Reviews?', text, re.IGNORECASE)
+    if reviews_match:
+        deal["reviews"] = int(reviews_match.group(1).replace(",", ""))
+
+    # ── رابط Amazon ──
+    url_match = re.search(r'(https?://(?:www\.amazon\.com|amzn\.to)/[^\s\)]+)', text)
+    if url_match:
+        deal["affiliate_url"] = url_match.group(1)
+
+    # ── الفئة من الهاشتاق ──
+    hashtag_match = re.search(r'#(\w+)', text)
+    if hashtag_match:
+        deal["category"] = hashtag_match.group(1)
+
+    # ── PRIME + Price Error ──
+    deal["is_prime"] = "PRIME" in text.upper()
+    deal["is_price_error"] = "PRICE ERROR" in text.upper() or "PRICING MISTAKE" in text.upper()
+
+    # تجاهل الرسائل بدون رابط أو عنوان
+    if not deal["affiliate_url"] or not deal["title"]:
+        return None
+
+    return deal
+
+
+# ─── Fetch from Telegram Channel via Bot API ──────────────────────────────────
+_channel_cache = {"deals": [], "last_fetch": 0}
+
+async def fetch_channel_deals(limit: int = 20) -> list:
+    """سحب أحدث المنتجات من القناة عبر Telegram Bot API."""
+    import time
+
+    # Cache لمدة ساعة
+    if _channel_cache["deals"] and time.time() - _channel_cache["last_fetch"] < 3600:
+        return _channel_cache["deals"]
+
+    if not TELEGRAM_BOT_TOKEN:
+        return []
+
+    channel = "@USA_Deals_and_Coupons"
+    deals = []
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            r = await client.get(
+                f"{TELEGRAM_API}/bot{TELEGRAM_BOT_TOKEN}/getUpdates",
+                params={"limit": 100, "allowed_updates": ["channel_post"]}
+            )
+            if r.status_code != 200:
+                # جرب forwardFromChat
+                logger.warning(f"getUpdates failed: {r.text[:100]}")
+                return await fetch_channel_via_web(limit)
+
+            data = r.json()
+            posts = [u.get("channel_post") for u in data.get("result", []) if u.get("channel_post")]
+
+            for post in posts[-limit:]:
+                text = post.get("text") or post.get("caption") or ""
+                # صورة المنتج
+                image_url = None
+                if post.get("photo"):
+                    # أكبر صورة متاحة
+                    photos = post["photo"]
+                    file_id = photos[-1]["file_id"]
+                    img_r = await client.get(
+                        f"{TELEGRAM_API}/bot{TELEGRAM_BOT_TOKEN}/getFile",
+                        params={"file_id": file_id}
+                    )
+                    if img_r.status_code == 200:
+                        file_path = img_r.json()["result"]["file_path"]
+                        image_url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file_path}"
+
+                deal = parse_channel_message(text, image_url)
+                if deal:
+                    deals.append(deal)
+
+    except Exception as e:
+        logger.error(f"Channel fetch error: {e}")
+        return await fetch_channel_via_web(limit)
+
+    _channel_cache["deals"] = deals
+    _channel_cache["last_fetch"] = time.time()
+    return deals
+
+
+async def fetch_channel_via_web(limit: int = 20) -> list:
+    """سحب من preview القناة العامة كـ fallback."""
+    deals = []
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            r = await client.get(
+                "https://t.me/s/USA_Deals_and_Coupons",
+                headers={"User-Agent": "Mozilla/5.0"}
+            )
+            if r.status_code == 200:
+                # استخراج الرسائل
+                messages = re.findall(
+                    r'<div class="tgme_widget_message_text[^"]*"[^>]*>(.*?)</div>',
+                    r.text, re.DOTALL
+                )
+                for msg_html in messages[-limit:]:
+                    # تنظيف HTML
+                    text = re.sub(r'<[^>]+>', ' ', msg_html)
+                    text = text.replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>').strip()
+                    deal = parse_channel_message(text)
+                    if deal:
+                        deals.append(deal)
+    except Exception as e:
+        logger.error(f"Web channel fetch error: {e}")
+    return deals
+
+
+@app.get("/channel-deals")
+async def get_channel_deals(limit: int = 10):
+    """جلب أحدث العروض من القناة."""
+    deals = await fetch_channel_deals(limit)
+    if not deals:
+        deals = await fetch_channel_via_web(limit)
+    return {
+        "source": "telegram_channel @USA_Deals_and_Coupons",
+        "count": len(deals),
+        "deals": deals
+    }
+
+
+@app.get("/channel-deals/refresh")
+async def refresh_channel_deals():
+    """إعادة تحميل العروض من القناة (مسح الـ cache)."""
+    _channel_cache["last_fetch"] = 0
+    deals = await fetch_channel_deals(20)
+    if not deals:
+        deals = await fetch_channel_via_web(20)
+    return {"refreshed": True, "count": len(deals), "deals": deals}
