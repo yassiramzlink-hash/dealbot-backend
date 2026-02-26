@@ -780,9 +780,22 @@ def parse_channel_message(text: str, image_url: str = None) -> dict:
     # إذا لم يُوجد title جرب أول سطر نصي طويل
     if not deal["title"]:
         for line in lines:
-            if len(line) > 20 and not line.startswith("http") and not line.startswith("#"):
+            if (len(line) > 20
+                and not line.startswith("http")
+                and not line.startswith("#")
+                and "URGENT" not in line.upper()
+                and "ACT IMMEDIATELY" not in line.upper()
+                and "PRICE ERROR" not in line.upper()
+                and not re.match(r'^[^a-zA-Z]+$', line)):
                 deal["title"] = line
                 break
+
+    # تنظيف العنوان من الرموز في البداية
+    if deal["title"]:
+        deal["title"] = re.sub(r'^[𐀀-􏿿☀-⛿✀-➿\s!⚠️🔥✨💰🛒🎯]+', '', deal["title"]).strip()
+        deal["title"] = re.sub(r'\s+', ' ', deal["title"]).strip()
+        if len(deal["title"]) < 5:
+            deal["title"] = None
 
     # ── السعر الحالي ──
     price_patterns = [
