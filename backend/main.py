@@ -437,13 +437,41 @@ async def search(
 
 @app.get("/hot-deals")
 async def hot_deals():
-    queries   = ["electronics sale", "kitchen deals", "gaming deals", "fashion sale"]
+    """يجلب أحدث العروض من قناة Telegram أولاً، ثم Mock data كـ fallback."""
+    # أولاً: جرب القناة
+    channel_deals = await fetch_channel_deals(20)
+    if not channel_deals:
+        channel_deals = await fetch_channel_via_web(20)
+
+    if channel_deals:
+        # تحويل بيانات القناة لنفس شكل Mock data
+        normalized = []
+        for d in channel_deals[:12]:
+            normalized.append({
+                "title":            d.get("title", ""),
+                "price":            d.get("price"),
+                "original_price":   d.get("original_price"),
+                "discount_percent": d.get("discount_percent", 0),
+                "rating":           d.get("rating"),
+                "review_count":     d.get("reviews"),
+                "affiliate_url":    d.get("affiliate_url"),
+                "image_url":        d.get("image_url"),
+                "category":         d.get("category"),
+                "is_prime":         d.get("is_prime", False),
+                "is_price_error":   d.get("is_price_error", False),
+                "source":           "telegram_channel",
+            })
+        scored = await ai_score_deals(normalized, "hot deals")
+        return {"count": len(scored), "deals": scored, "source": "telegram_channel"}
+
+    # Fallback: Mock data
+    queries = ["electronics sale", "kitchen deals", "gaming deals", "fashion sale"]
     all_deals = []
     for q in queries:
         deals = await search_amazon_products(q, limit=3)
         all_deals.extend(deals)
     scored = await ai_score_deals(all_deals, "hot deals")
-    return {"count": len(scored), "deals": scored[:12]}
+    return {"count": len(scored), "deals": scored[:12], "source": "mock"}
 
 
 @app.get("/categories")
